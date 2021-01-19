@@ -15,8 +15,12 @@ import java.util.ServiceLoader;
 
 import org.eclipse.microprofile.config.spi.ConfigSource;
 import org.eclipse.microprofile.config.spi.ConfigSourceProvider;
+import org.jboss.logging.Logger;
 
 public class KubernetesServiceBindingConfigSourceProvider implements ConfigSourceProvider {
+
+    private static final String BINDING_ROOT = "SERVICE_BINDING_ROOT";
+    private static final Logger log = Logger.getLogger(KubernetesServiceBindingRecorder.class);
 
     private final List<ServiceBinding> serviceBindings;
     private final List<ServiceBindingConverter> serviceBindingConverters;
@@ -25,13 +29,37 @@ public class KubernetesServiceBindingConfigSourceProvider implements ConfigSourc
         this(bindingRoot, determineConverters());
     }
 
+    public KubernetesServiceBindingConfigSourceProvider() {
+        Boolean enabled = Boolean.valueOf(System.getProperty("quarkus.kubernetes-service-binding.enabled", "false"));
+        String bindingRoot = System.getProperty(BINDING_ROOT, System.getenv(BINDING_ROOT));
+        if (!enabled) {
+            log.debug(
+                    "No attempt will be made to bind configuration based on Kubernetes ServiceBinding because the feature was not enabled.");
+            serviceBindingConverters = Collections.emptyList();
+            serviceBindings = Collections.emptyList();
+            return;
+        }
+        if (bindingRoot == null) {
+            log.debug(
+                    "No attempt will be made to bind configuration based on Kubernetes Service Binding because the binding root was not specified.");
+            serviceBindingConverters = Collections.emptyList();
+            serviceBindings = Collections.emptyList();
+            return;
+        }
+        this.serviceBindingConverters = determineConverters();
+        this.serviceBindings = determineServiceBindings(bindingRoot);
+    }
+
     //visible for testing
     KubernetesServiceBindingConfigSourceProvider(String bindingRoot, List<ServiceBindingConverter> serviceBindingConverters) {
         this.serviceBindingConverters = serviceBindingConverters;
+        this.serviceBindings = determineServiceBindings(bindingRoot);
+    }
+
+    private List<ServiceBinding> determineServiceBindings(String bindingRoot) {
         Path p = Paths.get(bindingRoot);
         if (!Files.exists(p)) {
-            serviceBindings = Collections.emptyList();
-            return;
+            return Collections.emptyList();
         }
         if (!Files.isDirectory(p)) {
             throw new IllegalArgumentException("Service Binding root '" + p + "' is not a directory");
@@ -39,9 +67,9 @@ public class KubernetesServiceBindingConfigSourceProvider implements ConfigSourc
 
         File[] files = p.toFile().listFiles();
         if (files == null) {
-            serviceBindings = Collections.emptyList();
+            return Collections.emptyList();
         } else {
-            serviceBindings = new ArrayList<>(files.length);
+            List<ServiceBinding> serviceBindings = new ArrayList<>(files.length);
             for (File f : files) {
                 serviceBindings.add(new ServiceBinding(f.toPath()));
             }
@@ -54,6 +82,7 @@ public class KubernetesServiceBindingConfigSourceProvider implements ConfigSourc
                     return o1.getProvider().compareTo(o2.getProvider());
                 }
             });
+            return serviceBindings;
         }
     }
 
